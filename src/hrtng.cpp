@@ -297,19 +297,25 @@ void hrt_unreg_act()
 
 static int idaapi jump_to_call_dst(vdui_t *vu)
 {
-	qstring callname;
-	cexpr_t *call;
-	if(!is_call(vu, &call))
+	if(!vu->item.is_citem())
 		return 0;
 
-	cexpr_t *callee = call->x;
+	// call => cast => memptr/obj/var
+	const citem_t *call = vu->cfunc->body.find_parent_of(vu->item.e);
+	if(call && call->op == cot_cast)
+		call = vu->cfunc->body.find_parent_of(call);
+	if(!call || call->op != cot_call)
+		return 0;
+
+	// jump to VT address in struct comment
 	ea_t dst_ea = BADADDR;
-	if (callee->op == cot_memptr || callee->op == cot_memref) {
-		// try jump to VT address in struct comment
-		uint32 offset = callee->m;
-		if (callee->x->op == cot_idx)
-			callee = callee->x;
-		tinfo_t t = callee->x->type;
+	cexpr_t *e = vu->item.e;
+	if (e->op == cot_memptr || e->op == cot_memref) {
+		int offset = e->m;
+		if (e->x->op == cot_idx)
+			e = e->x;
+		cexpr_t *var = e->x;
+		tinfo_t t = var->type;
 		while (t.is_ptr_or_array())
 			t.remove_ptr_or_array();
 		if (t.is_struct()) {
@@ -337,8 +343,12 @@ static int idaapi jump_to_call_dst(vdui_t *vu)
 			}
 		}
 	}
-	// jump to name
-	if(dst_ea == BADADDR) {
+
+	// jump to name, if callee is clicked. But pass globals handling to IDA because getExpName may strips suffix of name and jump to wrong dest
+	cexpr_t *callee = ((cexpr_t*)call)->x;
+	if(callee->op == cot_cast)
+		callee = callee->x;
+	if(dst_ea == BADADDR && vu->item.e == callee && callee->op != cot_obj) {
 		qstring callname;
 		if(getExpName(vu->cfunc, callee, &callname))
 			dst_ea = get_name_ea(BADADDR, callname.c_str());
@@ -350,6 +360,7 @@ static int idaapi jump_to_call_dst(vdui_t *vu)
 		COMPAT_open_pseudocode_REUSE_ACTIVE(dst_ea);
 		return 1;
 	}
+	//pass unhandled action to IDA
 	return 0;
 }
 
@@ -419,7 +430,7 @@ bool idaapi isCommented(flags64_t flags, void *ud)
 }
 static error_t idaapi dump_comments_idc(idc_value_t *argv, idc_value_t *res)
 {
-	msg("[hrt] dump_comments is called \n");
+	//msg("[hrt] dump_comments is called \n");
 	for(ea_t ea = inf_get_min_ea(); ea < inf_get_max_ea(); ea = next_that(ea, inf_get_max_ea(), isCommented)) {
 		qstring str;
 		//color_t cmttype;
@@ -498,6 +509,8 @@ void unregister_idc_functions()
 	del_idc_func(dump_names_desc.name);
 }
 
+//-------------------------------------------------------------------------
+//be aware, is_call returns true if the cursor is inside call's arguments zone too, as well as in callee expression
 bool is_call(vdui_t *vu, cexpr_t **call)
 {
 	if (!vu->item.is_citem())
@@ -2017,7 +2030,7 @@ ACT_DEF(create_dummy_struct)
 		cexpr_t *call;
 		if(is_call(vu, &call) && getExpName(vu->cfunc, call->x, &callname)) {
 			cexpr_t* asgn = get_assign_or_helper(vu, call, false);
-			if(asgn && (qstring::npos != callname.find("Alloc") || qstring::npos != callname.find("alloc") || qstring::npos != callname.find("new"))) {
+			if(asgn && (stristr(callname.c_str(), "alloc") || callname == "??2@YAPAXI@Z")) {
 				if(renameExp(asgn->ea, "", vu->cfunc, asgn->x, &name, vu)) {
 					return 1;//vu->refresh_view(true);
 				}
@@ -3780,10 +3793,13 @@ static ssize_t idaapi callback(void *, hexrays_event_t event, va_list va)
 
 //turn on func window synchronization
 static TWidget *StartWdg = NULL;
-class ida_local FuncSwitchSync_t : public ui_request_t
-{
-public:
-  virtual bool idaapi run()
+#if IDA_SDK_VERSION < 840
+const char* FunctionsToggleSync = "FuncSwitchSync";
+#else
+const char* FunctionsToggleSync = "FunctionsToggleSync";
+#endif
+
+bool idaapi runFuncSwitchSync()
   {
     TWidget *wdg = find_widget("Functions window");
     if(wdg && get_widget_type(wdg) == BWN_FUNCS) {
@@ -3792,6 +3808,15 @@ public:
       msg("[hrt] no funcs wnd\n");
       return false; //  remove the request from the queue
     }
+
+#if 0
+		TWidget * curw = get_current_widget();
+		if(!curw)
+			msg("[hrt] `get_current_widget` does't work\n");
+		else if(curw != wdg)
+			msg("[hrt] `activate_widget` does't work\n");
+#endif
+
 #if defined __LINUX__  && IDA_SDK_VERSION >= 740 && IDA_SDK_VERSION <= 750
     //ida 7.7 works without crutches
     //on ida 7.6 this trick does not works anymore
@@ -3806,32 +3831,38 @@ public:
       qstring title;
       if(curw)
         get_widget_title(&title, curw);
-      msg("[hrt] %d %p %s\n", i, curw, title.c_str());
+      msg("[hrt] %d %p '%s'\n", i, curw, title.c_str());
       activate_widget(wdg, true);
     }
 #endif //defined __LINUX__  && IDA_SDK_VERSION >= 740 && IDA_SDK_VERSION <= 750
 
     bool checkable;
-    bool bb = get_action_checkable("FuncSwitchSync", &checkable);
+    bool bb = get_action_checkable(FunctionsToggleSync, &checkable);
     if(bb && !checkable) {
-			update_action_checkable("FuncSwitchSync", true);
-			bb = get_action_checkable("FuncSwitchSync", &checkable);
+			update_action_checkable(FunctionsToggleSync, true);
+			bb = get_action_checkable(FunctionsToggleSync, &checkable);
 		}
+		qstring lbl;
+		bool bl = get_action_label(&lbl, FunctionsToggleSync);
 #if 0
     action_state_t state;
-    bool bs = get_action_state("FuncSwitchSync", &state);
-    if(state == AST_DISABLE_FOR_WIDGET) {
+    bool bs = get_action_state(FunctionsToggleSync, &state);
+    if(bs && state == AST_DISABLE_FOR_WIDGET) {
       msg("[hrt] AST_DISABLE_FOR_WIDGET\n");
-      //update_action_state(const char *name, action_state_t state);
+      //update_action_state(FunctionsToggleSync, AST_ENABLE_FOR_WIDGET);
     }
     bool checked;
-    bool bc = get_action_checked("FuncSwitchSync", &checked);
+    bool bc = get_action_checked(FunctionsToggleSync, &checked);
     bool visibility;
-    bool bv = get_action_visibility("FuncSwitchSync", &visibility);
-    msg("[hrt] FuncSwitchSync %d-%d, %d-%d, %d-%d, %d-%d\n", bs, state, bb, checkable, bc, checked, bv, visibility);
+    bool bv = get_action_visibility(FunctionsToggleSync, &visibility);
+    msg("[hrt] FuncSwitchSync %d-%d, %d-%d, %d-%d, %d-%d, %d-%s\n", bs, state, bb, checkable, bc, checked, bv, visibility, bl, lbl.c_str());
 #endif
-    if(process_ui_action("FuncSwitchSync"))//, 1, (void*)"Turn on synchronization"))
-      msg("[hrt] turn FuncSwitchSync on\n");
+		if(bl && strneq(lbl.c_str(), "Turn on", 7)) { //"Turn on synchronization"
+			if(process_ui_action(FunctionsToggleSync))
+				msg("[hrt] turn on %s\n", FunctionsToggleSync);
+			else
+				msg("[hrt] fail to turn on %s\n", FunctionsToggleSync);
+		}
 
     if(!StartWdg)
       StartWdg = find_widget("Pseudocode-A");
@@ -3847,6 +3878,20 @@ public:
 #endif //defined __LINUX__  && IDA_SDK_VERSION >= 740 && IDA_SDK_VERSION <= 750
     }
 		return false; //  remove the request from the queue
+}
+
+int idaapi cbRunFuncSwitchSync(void *ud)
+{
+	runFuncSwitchSync();
+	return -1;
+}
+
+class ida_local FuncSwitchSync_t : public ui_request_t
+{
+public:
+  virtual bool idaapi run()
+  {
+		return runFuncSwitchSync();
 	};
 };
 
@@ -3871,12 +3916,10 @@ static ssize_t idaapi ui_callback(void *user_data, int ncode, va_list va)
 	} else if( notification_code == ui_ready_to_run) {
 		//msg("[hrt] ui_ready_to_run\n");
 		StartWdg = get_current_widget();
-#if 1
+#if IDA_SDK_VERSION < 900 //FIXME: find exact IDA version number where switch to timer
 		execute_ui_requests(new FuncSwitchSync_t(), NULL);
 #else
-		ui_requests_t *reqs = new ui_requests_t();
-		reqs->push_back(new FuncSwitchSync_t());
-		execute_ui_requests(reqs);
+		register_timer(1000, cbRunFuncSwitchSync, NULL);
 #endif
 	}
 	return 0;
@@ -4339,7 +4382,7 @@ plugmod_t*
 	addon.producer = "Sergey Belov and Milan Bohacek, Rolf Rolles, Takahiro Haruyama," \
 									 " Karthik Selvaraj, Ali Rahbar, Ali Pezeshk, Elias Bachaalany, Markus Gaasedelen";
 	addon.url = "https://github.com/KasperskyLab/hrtng";
-	addon.version = "1.1.1";
+	addon.version = "1.1.4";
 	register_addon(&addon);	
 
 	return PLUGIN_KEEP;
