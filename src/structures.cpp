@@ -183,8 +183,8 @@ tid_t create_VT_struc(ea_t VT_ea, const char * basename, uval_t idx /*= BADADDR*
 		}
 	}
 	qstring name_vtbl = name_vt;
-	name_vtbl += "_vtbl";
-	name_vt += "_VT";
+	name_vtbl += VTBL_SUFFIX "_";
+	name_vt += VTBL_SUFFIX;
 
 	{//TODO: do this better
 		ea_t fncea = get_ea(VT_ea);
@@ -218,6 +218,7 @@ tid_t create_VT_struc(ea_t VT_ea, const char * basename, uval_t idx /*= BADADDR*
 	if (newid == BADADDR) {
 		udt_type_data_t s;
 		s.taudt_bits |= TAUDT_UNALIGNED;
+		s.set_vftable(true);
 		if(!newstruc.create_udt(s) || newstruc.set_named_type(NULL, name_vt.c_str()) != TERR_OK)
 			return BADNODE;
 		newid = newstruc.get_tid();
@@ -226,7 +227,12 @@ tid_t create_VT_struc(ea_t VT_ea, const char * basename, uval_t idx /*= BADADDR*
 			return BADNODE;
 	}
 	newstruc.set_type_cmt(struccmt.c_str());
-#endif //IDA_SDK_VERSION < 900
+
+	// actually set_vftable_ea is appeared in ida 7.6 but here will be used from ida9 becouse it probably depends on TAUDT_VFTABLE flag has been set few lines above
+	uint32 ord = get_tid_ordinal(newid);
+	if(ord)
+		set_vftable_ea(ord, VT_ea);
+#endif //IDA_SDK_VERSION >= 900
 	set_name(VT_ea, name_vtbl.c_str(), SN_FORCE);
 
 	ea_t ea = VT_ea;
@@ -295,7 +301,7 @@ int create_VT(tid_t parent, ea_t VT_ea)
 
 #endif //IDA_SDK_VERSION < 900
 
-	qstring name_VT = name + "_vtbl";
+	qstring name_VT = name + VTBL_SUFFIX;
 	if(VT_ea == BADADDR)
 		VT_ea = get_name_ea(BADADDR, name_VT.c_str());
 
@@ -322,7 +328,7 @@ int create_VT(tid_t parent, ea_t VT_ea)
 	type.get_type_by_tid(vt_struc_id);
 #endif //IDA_SDK_VERSION < 900
 	type = make_pointer(type);
-	add_vt_member(struc, 0, "VT", type, NULL);
+	add_vt_member(struc, 0, VTBL_MEMNAME, type, NULL);
 	return 1;
 }
 
