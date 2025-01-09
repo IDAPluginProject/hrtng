@@ -158,6 +158,12 @@ static bool getCallName(cfunc_t *func, cexpr_t* call, qstring* name)
 		return true;
 	}
 
+	size_t ctor = funcname.find("::ctor");
+	if(ctor != qstring::npos && ctor != 0) {
+		*name = funcname.substr(0, ctor);
+		return true;
+	}
+
 	carglist_t &args = *call->a;
 
 	if (args.size() == 0 && funcname == "GetLastError") {
@@ -417,7 +423,7 @@ static bool renameUdtMemb(ea_t refea, const char* funcname, tinfo_t type, uint32
 	int midx = type.find_udm(&memb, STRMEM_AUTO);
 	if(-1 == midx) {
 		qstring typeStr;
-		type.print(&typeStr);
+		type.get_type_name(&typeStr);
 		msg("[hrt] renameUdtMemb no %x offset inside \"%s\"\n", offset, typeStr.c_str());
 		return false;
 	}
@@ -433,40 +439,21 @@ static bool renameUdtMemb(ea_t refea, const char* funcname, tinfo_t type, uint32
 	}
 #endif
 
-	qstring newName = *name;
-	if (newName.size() > MAX_NAME_LEN)
-		newName.resize(MAX_NAME_LEN);
-	if(!validate_name(&newName, VNT_UDTMEM)) {
-		msg("[hrt] FIXME: renameUdtMemb(%a, ..., \"%s\")\n", refea, newName.c_str());
-		return false;
-	}
-
-	//check if type already has such name
-	qstring basename = newName;
-	for(int i = 0; i < 20; i++) {
-		udm_t m;
-		m.name = newName;
-		if(-1 == type.find_udm(&m, STRMEM_NAME)) {
-			qstring oldName;
-			type.print(&oldName);
-			oldName.append('.');
-			oldName.append(memb.name);
+	qstring newName = good_udm_name(type, name->c_str());
+	qstring oldName;
+	type.get_type_name(&oldName);
+	oldName.append('.');
+	oldName.append(memb.name);
 #if IDA_SDK_VERSION >= 900
-			if(TERR_OK == type.rename_udm(midx, newName.c_str())) {
+	if(TERR_OK == type.rename_udm(midx, newName.c_str())) {
 #else //IDA_SDK_VERSION < 900
-			struc_t* st = get_member_struc(oldName.c_str());
-			if(st && set_member_name(st, offset, newName.c_str())) {
+	struc_t* st = get_member_struc(oldName.c_str());
+	if(st && set_member_name(st, offset, newName.c_str())) {
 #endif //IDA_SDK_VERSION >= 900
-				msg("[hrt] %a %s: struct \"%s\" member at 0x%x was renamed to %s\n", refea, funcname, oldName.c_str(), offset, newName.c_str());
-				return true;
-			}
-			//msg("[hrt] renameUdtMemb fail%d (struct \"%s\" member at 0x%x)\n", st ? 1 : 0, typeStr.c_str(), offset);
-			return false;
-		}
-		newName = basename;
-		newName.cat_sprnt("_%d", i + 1);
+		msg("[hrt] %a %s: struct \"%s\" member at 0x%x was renamed to %s\n", refea, funcname, oldName.c_str(), offset, newName.c_str());
+		return true;
 	}
-	//msg("[hrt] renameUdtMemb fail2\n");
+	msg("[hrt] %a %s: fail rename struct member \"%s\" at 0x%x to %s\n", refea, funcname, oldName.c_str(), offset, newName.c_str());
 	return false;
 }
 
@@ -572,6 +559,10 @@ bool getExpName(cfunc_t *func, cexpr_t* exp, qstring* name, bool derefPtr /* =fa
 	return res;
 }
 
+bool isRenameble(ctype_t ct)
+{
+	return (ct == cot_var || ct == cot_obj || ct == cot_memptr || ct == cot_memref);
+}
 
 bool renameExp(ea_t refea, const char* funcname, cfunc_t *func, cexpr_t* exp, qstring* name, vdui_t *vdui, bool derefPtr /*= false*/)
 {
@@ -579,8 +570,7 @@ bool renameExp(ea_t refea, const char* funcname, cfunc_t *func, cexpr_t* exp, qs
 	if(exp->op == cot_cast)
 		exp = exp->x;
 
-	if(derefPtr && exp->op == cot_ref &&
-			(exp->x->op == cot_var || exp->x->op == cot_obj || exp->x->op == cot_memptr || exp->x->op == cot_memref)) {
+	if(derefPtr && exp->op == cot_ref && isRenameble(exp->x->op)) {
 		if (name->length() > 2 && name->at(0) == 'p' && name->at(1) == '_') {
 			name->remove(0, 2);
 		} else {
