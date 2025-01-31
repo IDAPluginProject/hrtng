@@ -13,6 +13,107 @@
 
 //-------------------------------------------------------------------------
 #if IDA_SDK_VERSION < 900
+#define AST_ENABLE_FOR_ME return ((ctx->widget_type == BWN_STRUCTS) ? AST_ENABLE_FOR_WIDGET : AST_DISABLE_FOR_WIDGET)
+ACT_DECL(extract_substruct_callback, AST_ENABLE_FOR_ME)
+ACT_DECL(unpack_this_member_callback, AST_ENABLE_FOR_ME)
+ACT_DECL(which_struct_matches_here_callback, AST_ENABLE_FOR_ME)
+ACT_DECL(create_VT_callback, AST_ENABLE_FOR_ME)
+#undef AST_ENABLE_FOR_ME
+
+static const action_desc_t actions[] =
+{
+	ACT_DESC("[hrt] Extract substruct", NULL, extract_substruct_callback),
+	ACT_DESC("[hrt] Unpack substruct", NULL, unpack_this_member_callback),
+	ACT_DESC("[hrt] Which struct matches here?", NULL, which_struct_matches_here_callback),
+	ACT_DESC("[hrt] Add VT", NULL, create_VT_callback)
+};
+
+void structs_reg_act()
+{
+	for (size_t i = 0, n = qnumber(actions); i < n; ++i)
+		register_action(actions[i]);
+}
+
+void structs_unreg_act()
+{
+	for (size_t i = 0, n = qnumber(actions); i < n; ++i)
+		unregister_action(actions[i].name);
+}
+
+void add_structures_popup_items(TWidget *view, TPopupMenu *p)
+{
+	attach_action_to_popup(view, p, ACT_NAME(extract_substruct_callback));
+	attach_action_to_popup(view, p, ACT_NAME(unpack_this_member_callback));
+	attach_action_to_popup(view, p, ACT_NAME(which_struct_matches_here_callback));
+	attach_action_to_popup(view, p, ACT_NAME(create_VT_callback));
+}
+//-------------------------------------------------------------------------
+
+int extract_substruct(uval_t idx, uval_t begin, uval_t end)
+{
+	tid_t id = get_struc_by_idx( idx );
+	if (is_union(id))
+		return 0;
+	struc_t * struc = get_struc(id);
+	if(!struc)
+		return 0;
+
+	qstring struc_name;
+	get_struc_name(&struc_name, id);
+
+	qstring new_struc_name;
+	const char *nsn = NULL;
+	int i = 1;
+	do {
+		new_struc_name = struc_name;
+		new_struc_name.cat_sprnt("_obj_%d",i);
+		i++;
+	} while ((get_name_ea(BADADDR, new_struc_name.c_str()) != BADADDR) && i < 100);
+
+	if (i < 100)
+		nsn = new_struc_name.c_str();
+
+	tid_t newid = add_struc(idx+1, nsn);
+	struc_t * newstruc = get_struc(newid);
+	asize_t delta = begin;
+	asize_t off = begin;
+	while(off < end) {
+		member_t * member = get_member(struc, off);
+		if(member) {
+			qstring name = get_member_name(member->id);
+			opinfo_t mt;
+			retrieve_member_info(&mt, member);
+
+			asize_t size = get_member_size(member);
+			struc_error_t err = add_struc_member(newstruc, name.c_str(), off - delta, member->flag, &mt, size);
+			if (err != STRUC_ERROR_MEMBER_OK) {
+				msg("[hrt] add_struc_member(%s, %s, %a) error %d\n", new_struc_name.c_str(), name.c_str(), off - delta, err);
+			}
+
+			tinfo_t type;
+			if(get_or_guess_member_tinfo(&type, member)) {
+				member_t * newmember = get_member(newstruc, off-delta);
+				set_member_tinfo(newstruc, newmember, 0, type, SET_MEMTI_COMPATIBLE /*| SET_MEMTI_MAY_DESTROY*/);
+			}
+		}
+		off = get_struc_next_offset(struc, off);
+	}
+
+	//reset original member type
+	tinfo_t type;
+	qstring qname;
+	qstring tmpname2;
+	get_struc_name(&tmpname2, newid);
+	tmpname2 += " dummy;";
+	parse_decl(&type, &qname, NULL, tmpname2.c_str(),  PT_VAR);
+	member_t * member = get_member(struc, begin);
+	set_member_tinfo(struc, member, 0, type, SET_MEMTI_MAY_DESTROY);
+	return 1;
+}
+#endif //IDA_SDK_VERSION < 900
+
+//-------------------------------------------------------------------------
+#if IDA_SDK_VERSION < 900
 asize_t struct_get_member(tid_t strId, asize_t offset, tid_t* last_member, tidvec_t* trace, asize_t adjust)
 {
 	struc_t *str = get_struc(strId);
@@ -36,13 +137,22 @@ asize_t struct_get_member(tid_t strId, asize_t offset, tid_t* last_member, tidve
 		return offset + adjust;
 	*last_member = member->id;
 
+#if 1// dont dive into substruct to check first member, returns struct
+	if (member->get_soff() == offset) {
+		if (trace)
+			trace->push_back(member->id);
+		return adjust;
+	}
+#endif
 	struc_t * membstr = get_sptr(member);
 	if (!membstr) {
+#if 0 // this variant dives into substruct to check first member of substruct
 		if (member->get_soff() == offset) {
 			if (trace)
 				trace->push_back(member->id);
 			return adjust;
 		}
+#endif
 		*last_member = BADNODE; // offset is in the middle of member
 		return offset + adjust;
 	}
@@ -80,6 +190,13 @@ asize_t struct_get_member(tid_t strId, asize_t offset, tid_t* last_member, tidve
 		return offset + adjust;
 	*last_member = str.get_udm_tid(midx);
 
+#if 1// dont dive into substruct to check first member, returns struct
+	if (member.offset == offset * 8) {
+		if (trace)
+			trace->push_back(*last_member);
+		return adjust;
+	}
+#endif
 	tid_t tmsid = BADNODE;
 	if (member.type.is_struct()) {
 		tmsid = member.type.get_tid();
@@ -89,11 +206,13 @@ asize_t struct_get_member(tid_t strId, asize_t offset, tid_t* last_member, tidve
 			tmsid = arrItem.get_tid();
 	}
 	if (tmsid == BADNODE) {
+#if 0 // this variant dives into substruct to check first member of substruct
 		if (member.offset == offset * 8) {
 			if (trace)
 				trace->push_back(*last_member);
 			return adjust;
 		}
+#endif
 		*last_member = BADNODE; // offset is in the middle of member
 		return offset + adjust;
 	}
@@ -104,7 +223,288 @@ asize_t struct_get_member(tid_t strId, asize_t offset, tid_t* last_member, tidve
 }
 #endif //IDA_SDK_VERSION < 900
 
-//-------------------------------------------------------------------------
+bool struct_has_member(tid_t strId, asize_t offset)
+{	
+	tid_t last_member = BADNODE;
+	return struct_get_member(strId, offset, &last_member) == 0 && last_member != BADNODE;
+}
+
+#if IDA_SDK_VERSION < 900
+bool print_struct_member_name(tid_t strId, asize_t offset, qstring * name, bool InRecur)
+{
+	struc_t *str = get_struc(strId);
+	if(!str)
+		return false;
+	member_t * member = get_member(str, offset);
+	if (member) {
+		if (member->get_soff() == offset) {
+			if (InRecur)
+				get_member_name(name, member->id);
+			else
+				get_member_fullname(name, member->id);
+			return true;
+		}
+
+		struc_t * membstr = get_sptr(member);
+		if (membstr) {
+			qstring subname;
+			if (InRecur)
+				get_member_name(name, member->id);
+			else {
+				get_struc_name(name, str->id);
+				name->append('.');
+				get_member_name(&subname, member->id);
+				name->append(subname);
+			}
+			if (print_struct_member_name(membstr->id, offset - member->get_soff(), &subname, true)) {
+				name->append('.');
+				name->append(subname);
+				return true;
+			}
+		}
+	}
+	if (!InRecur) {
+		get_struc_name(name, str->id);
+		name->cat_sprnt(" + 0x%x", offset);
+	}
+	return false;
+}
+bool print_struct_member_type(tid_t membId, qstring *tname)
+{
+	member_t* member = get_member_by_id(membId);
+	tinfo_t type;
+	if(member && get_member_type(member, &type))
+		return type.print(tname);
+	return false;
+}
+#else
+bool print_struct_member_name(tid_t strId, asize_t offset, qstring * name, bool InRecur)
+{
+	tinfo_t str;
+	if (strId == BADNODE || !str.get_type_by_tid(strId) || !str.is_struct())
+		return false;
+	udm_t member;
+	member.offset = offset; // in bytes for STRMEM_AUTO
+	int midx = str.find_udm(&member, STRMEM_AUTO);
+	if(midx >= 0) {
+		if(member.offset == offset * 8) {
+			if (InRecur) {
+				*name = member.name;
+			} else {
+				str.get_type_name(name);
+				name->append('.');
+				name->append(member.name);
+			}
+			return true;
+		}
+
+		tid_t tmsid = BADNODE;
+		if (member.type.is_struct()) {
+			tmsid = member.type.get_tid();
+		}	else if (member.type.is_array()) {
+			tinfo_t arrItem = member.type.get_ptrarr_object();
+			if(arrItem.is_struct())
+				tmsid = arrItem.get_tid();
+		}
+
+		if (tmsid != BADNODE) {
+			if (InRecur)
+				*name = member.name;
+			else {
+				str.get_type_name(name);
+				name->append('.');
+				name->append(member.name);
+			}
+			qstring subname;
+			if (print_struct_member_name(tmsid, offset - member.offset/8, &subname, true)) {
+				name->append('.');
+				name->append(subname);
+				return true;
+			}
+		}
+	}
+	if (!InRecur) {
+		get_tid_name(name, strId);
+		name->cat_sprnt(" + 0x%x", offset);
+	}
+	return false;
+}
+bool print_struct_member_type(tid_t membId, qstring *tname)
+{
+	udm_t udm;
+	tinfo_t imembStrucType;
+	ssize_t imembIdx = imembStrucType.get_udm_by_tid(&udm, membId);
+	if(imembIdx >= 0)
+		return udm.type.print(tname);
+	return false;
+}
+#endif //IDA_SDK_VERSION < 900
+
+const int matched_structs_t::widths[] = { 40 };
+const char* const matched_structs_t::header[] = { "Type" };
+void idaapi matched_structs_t::get_row(qstrvec_t* cols_, int* icon_, chooser_item_attrs_t* attrs, size_t n) const
+{
+	// assert: n < list.size()
+	qstrvec_t& cols = *cols_;
+	get_tid_name(&cols[0], list[n]);
+}
+
+#if IDA_SDK_VERSION < 900
+//----------------------------------------------------
+bool compare_structs(struc_t * str1, asize_t begin, struc_t * str2)
+{
+	asize_t off = 0;
+	while (off != BADADDR)
+	{
+		member_t * member2 = get_member(str2, off);
+		member_t * member1 = get_member(str1, off + begin);
+		if (!member2)
+			break;
+		if (!member1)
+			return false;
+		if (member1->get_soff() != off + begin)
+			return false;
+		if (get_member_size(member1) != get_member_size(member2))
+			return false;
+		off = get_struc_next_offset(str2, off);
+	}
+	return true;
+}
+
+int which_struct_matches_here(uval_t idx1, uval_t begin, uval_t end)
+{
+	tid_t id = get_struc_by_idx(idx1);
+	if (is_union(id))
+		return 0;
+
+	struc_t * struc = get_struc(id);
+	if(!struc)
+		return 0;
+
+	uval_t last = get_struc_prev_offset(struc, end);
+	if(last == BADADDR || last > end)
+		return 0;
+
+	asize_t size = last + get_member_size(get_member(struc, last)) - begin;
+	matched_structs_t m;	
+	for(uval_t idx = get_first_struc_idx(); idx!=BADNODE; idx=get_next_struc_idx(idx)) {
+		tid_t id = get_struc_by_idx(idx);
+		struc_t * struc_candidate = get_struc(id);
+		if(!struc_candidate)
+			continue;
+		if(is_union(id))
+			continue;
+		if(get_struc_size(struc_candidate) != size)
+			continue;
+		if(compare_structs(struc, begin, struc_candidate))
+			m.list.push_back(id);
+	}
+	ssize_t choosed = m.choose();	
+	if(choosed >= 0)
+		open_structs_window(m.list[choosed], 0);
+	return 0;
+}
+
+int unpack_this_member(uval_t idx, uval_t offset)
+{
+	tid_t id = get_struc_by_idx( idx );
+	if(is_union(id))
+		return 0;
+
+	struc_t * struc = get_struc(id);
+	if(!struc)
+		return 0;
+
+	member_t * member = get_member( struc, offset);
+	if (!member || member->get_soff() != offset)
+		return 0;
+
+	struc_t * membstr = get_sptr(member);
+	if(!membstr)
+		return 0;
+
+	if (is_union(membstr->id))
+		return 0;
+
+	asize_t delta = offset;
+	asize_t off = 0;
+	asize_t end = get_struc_size(membstr);
+	del_struc_member(struc, offset);
+	while(off <= end) {
+		member_t * member = get_member(membstr, off);
+		if(member) {
+			qstring name = get_member_name(member->id);
+			opinfo_t mt;
+			retrieve_member_info(&mt, member);
+
+			asize_t size = get_member_size(member);			
+			add_struc_member(struc, name.c_str(), off + delta, member->flag, &mt, size);
+			
+			tinfo_t type;
+			if(get_or_guess_member_tinfo(&type, member))
+			{
+				member_t * newmember = get_member(struc, off + delta);
+				set_member_tinfo(struc, newmember, 0, type, /*SET_MEMTI_COMPATIBLE | */SET_MEMTI_MAY_DESTROY);
+			}
+		}
+		off = get_struc_next_offset(membstr, off);
+	}
+	return 1;
+}
+
+ACT_DEF(extract_substruct_callback)
+{
+	if (ctx->has_flag(ACF_HAS_SELECTION) && get_viewer_place_type(ctx->widget) == TCCPT_STRUCTPLACE) {
+		structplace_t * sb = (structplace_t *)ctx->cur_sel.from.at;
+		structplace_t * se = (structplace_t *)ctx->cur_sel.to.at;
+		if (sb->idx == se->idx && extract_substruct(sb->idx, sb->offset, se->offset)) {
+			unmark_selection();
+			return 1;
+		}
+	}
+	warning("[hrt] Please select part of structure to extract substruct\n");
+	return 0;
+}
+
+ACT_DEF(unpack_this_member_callback)
+{
+	if(get_viewer_place_type(ctx->widget) != TCCPT_STRUCTPLACE)
+		return 0;
+	structplace_t * place;
+	int x, y;
+	place = (structplace_t *)get_custom_viewer_place(ctx->widget, false, &x, &y);
+	if (!place)
+		return 0;
+
+	//msg("%d, %d\n", place->idx, place->offset);
+	return unpack_this_member(place->idx, place->offset);
+}
+
+
+ACT_DEF(which_struct_matches_here_callback)
+{
+	if (ctx->has_flag(ACF_HAS_SELECTION) && get_viewer_place_type(ctx->widget) == TCCPT_STRUCTPLACE) {
+		structplace_t * sb = (structplace_t *)ctx->cur_sel.from.at;
+		structplace_t * se = (structplace_t *)ctx->cur_sel.to.at;
+		if (sb->idx == se->idx)
+			return which_struct_matches_here(sb->idx, sb->offset, se->offset);
+	}
+	warning("[hrt] Please select part of structure to match substruct\n");
+	return 0;
+}
+
+ACT_DEF(create_VT_callback)
+{
+	structplace_t* place;
+	int x, y;
+	place = (structplace_t*)get_custom_viewer_place(ctx->widget, false, &x, &y);
+	if (!place)
+		return false;
+
+	return create_VT(get_struc_by_idx(place->idx), BADADDR);
+}
+#endif // IDA_SDK_VERSION < 900
+
 #if IDA_SDK_VERSION < 900
 void add_vt_member(struc_t* sptr, ea_t offset, const char* name, const tinfo_t& type, const char* comment)
 {
@@ -168,16 +568,15 @@ tid_t create_VT_struc(ea_t VT_ea, const char * basename, uval_t idx /*= BADADDR*
 			}
 			if(!strnicmp(name_vt.c_str(), "vtbl_", 5))
 				name_vt.remove(0, 5);
-			if(name_vt.length() > 5 && !stricmp(&name_vt[name_vt.length() - 5], "_vtbl"))
-				name_vt.remove_last(5);
+			name_vt.remove(name_vt.find(VTBL_SUFFIX "_"), 6);
 			if(name_vt[0] >= '0' && name_vt[0] <= '9')
 				name_vt.insert(0, '_');
 		} else {
 			name_vt.sprnt("_%a", VT_ea);
 		}
 	}
-	qstring name_vtbl = name_vt;
-	name_vtbl += VTBL_SUFFIX "_";
+	qstring name_VT_ea = name_vt;
+	name_VT_ea += VTBL_SUFFIX "_";
 	name_vt += VTBL_SUFFIX;
 
 	{//TODO: do this better
@@ -227,7 +626,7 @@ tid_t create_VT_struc(ea_t VT_ea, const char * basename, uval_t idx /*= BADADDR*
 	if(ord)
 		set_vftable_ea(ord, VT_ea);
 #endif //IDA_SDK_VERSION >= 900
-	set_name(VT_ea, name_vtbl.c_str(), SN_FORCE);
+	set_name(VT_ea, name_VT_ea.c_str(), SN_FORCE);
 
 	ea_t ea = VT_ea;
 	ea_t offset = 0;
@@ -277,7 +676,6 @@ tid_t create_VT_struc(ea_t VT_ea, const char * basename, uval_t idx /*= BADADDR*
 	return newid;
 }
 
-
 int create_VT(tid_t parent, ea_t VT_ea)
 {
 	qstring name;
@@ -324,5 +722,39 @@ int create_VT(tid_t parent, ea_t VT_ea)
 	type = make_pointer(type);
 	add_vt_member(struc, 0, VTBL_MEMNAME, type, NULL);
 	return 1;
+}
+
+qstring dummy_struct_name(size_t size, const char* sprefix);
+
+bool confirm_create_struct(tinfo_t &out_type, tinfo_t &in_type, const char* sprefix)
+{
+	qstring strucname = dummy_struct_name(in_type.get_size(), sprefix);
+	qstring in_type_decl;
+	if(!in_type.print(&in_type_decl, strucname.c_str(), PRTYPE_MULTI | PRTYPE_TYPE | PRTYPE_PRAGMA | PRTYPE_SEMI, 5, 40, NULL, NULL)
+		 || in_type_decl.empty())
+		return false;
+
+	qstring answer = in_type_decl;
+	while(1)
+	{
+		if(!ask_text(&answer, 0, in_type_decl.c_str(), "[hrt] The following new type %s will be created", strucname.c_str()))
+			return false;
+
+		tinfo_t new_type;
+		if (!parse_decl(&new_type, &strucname, NULL, answer.c_str(), PT_TYP))
+			continue;
+
+		tinfo_code_t err = new_type.set_named_type(NULL, strucname.c_str(), NTF_TYPE);
+		if (TERR_OK != err) {
+			warning("[hrt] Could not create %s, maybe it already exists? (tinfo_code_t = %d)", strucname.c_str(), err);
+			continue;
+		}
+#if IDA_SDK_VERSION < 900
+		import_type(get_idati(), -1, strucname.c_str());
+#endif //IDA_SDK_VERSION < 900
+		break;
+	}
+	out_type = create_typedef(strucname.c_str());
+	return true;
 }
 
