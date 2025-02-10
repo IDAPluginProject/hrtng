@@ -9,7 +9,7 @@ The first thing I've seen very annoying when begins reverse a lot - I spend too 
 	- number in `enum` form
 	- call to procedure with following name (`A`/`W` letters and additions like `_2` in the end of proc name are ignored):
 		+ `GetLastError` produce name `err`
-		+ function with name contains `__get` or `::get` substring. Example: `SomeClass::getSomeMemb()` produce name: `SomeMemb`
+		+ function with name contains `get` substring. Example: `SomeClass::getSomething()` or `SomeClass::get_Something()` produce name: `Something`
 		+ function with name contains `::ctor` substring. Example: `SomeClass::ctor_copy()` produce name: `SomeClass`
 		+ `LoadLibrary(LibName)` and `GetModuleHandle(LibName)` produce name: `hLibName`
 		+ `GetProcAddress(hMod, ProcName)` produce name: `ProcName`
@@ -22,7 +22,7 @@ The first thing I've seen very annoying when begins reverse a lot - I spend too 
 	- names like: `var_XX`, `arg_XX`, `aXX`, `vXX, vXa,` where `XX` one or two digits
 	- CPU register names with optional numeric suffix (like `ecx0`)
 	- struct member with name `VT` or name begins from `field_` or `fld_`
-  - case sensitive names optionally prefixed with `lp` : `this`, `result`, `Mem`, `Memory`, `Block`, `String`, `ProcName`, `ProcAddress`, `LibFileName`, `ModuleName`, `LibraryA`, `LibraryW`
+  - case sensitive names optionally prefixed with `lp` : `this`, `inited`, `result`, `Mem`, `Memory`, `Block`, `String`, `ProcName`, `ProcAddress`, `LibFileName`, `ModuleName`, `LibraryA`, `LibraryW`
 	- in addition to above, for variables and call arguments only: `Str`, `Src`, `Dst`, `dwBytes`, `Flink`, `Blink`
 * For the assignment operator like `A = B;` where one of side is a Good-Name-Source and another is unnamed (Bad-Name-Source) variable or struct member, bad-named part is renamed to `NameSource_XX` where `XX` is one or two digits
 * Same for relation ops like `A == B`, `A < B`, etc 
