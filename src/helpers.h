@@ -22,9 +22,9 @@
 #pragma once
 #include "warn_off.h"
 #include <hexrays.hpp>
-#if IDA_SDK_VERSION < 900
+#if IDA_SDK_VERSION < 850
 #include <struct.hpp>
-#endif
+#endif //IDA_SDK_VERSION < 850
 #include "warn_on.h"
 
 
@@ -42,12 +42,12 @@
 	};\
 	static name ## _t name;
 
-#if IDA_SDK_VERSION < 900
+#if IDA_SDK_VERSION < 850
 #define interactive_graph_t mutable_graph_t
 #define get_named_type_tid(x) get_struc_id(x)
 #define get_tid_name(x, y) get_struc_name(x, y)
 #define merge_blocks combine_blocks
-#endif // IDA_SDK_VERSION < 900
+#endif // IDA_SDK_VERSION < 850
 
 #if IDA_SDK_VERSION < 840
   #define udm_t udt_member_t
@@ -93,6 +93,8 @@
 #else //IDA_SDK_VERSION >= 730
 #define REFRESH_FUNC_CTEXT(pvu)    pvu->cfunc->refresh_func_ctext()
 #endif //IDA_SDK_VERSION < 730
+
+#define MAX_NAME_LEN 63 //inf.max_autoname_len (inf_get_max_autoname_len)
 
 bool at_atoea(const char * str, ea_t * pea );
 bool strtobx(const char *str, uint8 *b);
