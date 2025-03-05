@@ -4827,7 +4827,7 @@ static ssize_t idaapi ui_callback(void *user_data, int ncode, va_list va)
 	} else if( notification_code == ui_ready_to_run) {
 		//msg("[hrt] ui_ready_to_run\n");
 		StartWdg = get_current_widget();
-#if IDA_SDK_VERSION < 900 //FIXME: find exact IDA version number where switch to timer
+#if IDA_SDK_VERSION < 850 //FIXME: find exact IDA version number where switch to timer
 		execute_ui_requests(new FuncSwitchSync_t(), NULL);
 #else
 		register_timer(1000, cbRunFuncSwitchSync, NULL);
@@ -5153,27 +5153,27 @@ static ssize_t idaapi idb_callback(void *user_data, int ncode, va_list va)
 			ea_t ea = va_arg(va, ea_t);
 			const char *new_name = va_arg(va, const char *);
 			int local_name = va_arg(va, int);
-			// appeared in ida 7.6
-			//< \param old_name    (const char *) can be nullptr
+			//< \param old_name    (const char *) can be nullptr // appeared in ida 7.6
 			if(local_name || new_name == nullptr)
 				break;
+
+			if (!auto_is_ok()) // disable time-consuming operations during initial autoanalysis
+				break;
+
 			flags64_t ea_fl = get_flags(ea);
-			if(is_data(ea_fl) || is_unknown(ea_fl)) {
-				//Grr! IDA made itsown implementation of the same, but set non pointer type
-				//So, now force to overwrite wrong typenfo
-				tinfo_t oldType;
-				//if(!get_tinfo(&oldType, ea) || oldType.is_decl_func())
-				{
-					tinfo_t t = getType4Name(new_name);
-					if(!t.empty() && set_tinfo(ea, &t)) {
-						qstring str;
-						t.print(&str);
-						msg("[hrt] %a: set glbl '%s' type '%s'\n", ea, new_name, str.c_str());
-					}
+			tinfo_t oldType;
+			// if there is no typeinfo, or func-type on a pointer
+			if(!get_tinfo(&oldType, ea) || oldType.empty() || (oldType.is_func() && is_ea(ea_fl))) {
+				tinfo_t t = getType4Name(new_name, is_func(ea_fl));
+				if(!t.empty() && set_tinfo(ea, &t)) {
+					qstring str;
+					t.print(&str);
+					msg("[hrt] %a: set glbl '%s' type '%s'\n", ea, new_name, str.c_str());
 				}
-			} else if(is_func(ea_fl)) {
-				if(auto_is_ok())
-					progress();
+			}
+
+			if(is_func(ea_fl)) {
+				progress();
 				const char* ctor = qstrstr(new_name, "::ctor");
 				if(ctor) {
 					tinfo_t tif;
@@ -5213,8 +5213,12 @@ static ssize_t idaapi idb_callback(void *user_data, int ncode, va_list va)
 			ea_t ea = va_arg(va, ea_t);
 			const type_t *type = va_arg(va, type_t *);
 			const p_list *fnames = va_arg(va, p_list *);
-			tinfo_t tif;
+
+			if (!auto_is_ok()) // disable time-consuming operations during initial autoanalysis
+				break;
+
 			flags64_t ea_fl = get_flags(ea);
+			tinfo_t tif;
 			if(type && is_func(ea_fl) && is_type_func(*type) && tif.deserialize(NULL, &type, &fnames) && tif.is_func()) {
 				qstring funcName = get_name(ea);
 				//stripName(&funcName);
@@ -5327,7 +5331,7 @@ plugmod_t*
 	addon.producer = "Sergey Belov and Milan Bohacek, Rolf Rolles, Takahiro Haruyama," \
 									 " Karthik Selvaraj, Ali Rahbar, Ali Pezeshk, Elias Bachaalany, Markus Gaasedelen";
 	addon.url = "https://github.com/KasperskyLab/hrtng";
-	addon.version = "2.3.27";
+	addon.version = "2.3.29";
 	register_addon(&addon);	
 
 	msg("[hrt] %s (%s) v.%s for IDA%d is ready to use\n", addon.id, addon.name, addon.version, IDA_SDK_VERSION);

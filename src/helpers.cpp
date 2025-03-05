@@ -71,26 +71,33 @@ size_t get_idx_of_lvar(vdui_t &vu, lvar_t *lvar)
 	return get_idx_of(vu.cfunc->get_lvars(), lvar);
 }
 
-tinfo_t  getType4Name(const char *name)
+tinfo_t getType4Name(const char *name, bool funcType /*= false*/)
 {
 	qstring newName = name;
 	stripName(&newName);
-	bool isPtr = true;
+	bool isPtr = false;
 	bool isDblPtr = false;
-	if(newName.last() == '_') {
-		isPtr = false;
-		newName.remove_last();
-	} else if(newName.length() > 2 && newName.at(0) == 'p' && newName.at(1) == '_') {
-		isDblPtr = true;
-		newName.remove(0, 2);
+
+	if(!funcType) {
+		isPtr = true;
+		if(newName.last() == '_') {
+			isPtr = false;
+			newName.remove_last();
+		} else if(newName.length() > 2 && newName.at(0) == 'p' && newName.at(1) == '_') {
+			isDblPtr = true;
+			newName.remove(0, 2);
+		}
 	}
 
 	const type_t *type;
 	const p_list *fields;
 	tinfo_t       t; 
-	if(get_named_type(NULL, newName.c_str(), NTF_TYPE, &type) && is_type_struct(*type)) { // for structs NTF_TYPE flag req
-		t = create_typedef(newName.c_str());
-	} else if(isPtr && get_named_type(NULL, newName.c_str(), 0, &type, &fields) && is_type_func(*type)) { // zero flag for functions
+	if(get_named_type(NULL, newName.c_str(), NTF_TYPE, &type, &fields)) {
+		if(is_type_struct(*type)) 
+			t = create_typedef(newName.c_str());
+		else
+			t.deserialize(NULL, &type, &fields);
+	} else if(/*(funcType || isPtr) && */get_named_type(NULL, newName.c_str(), 0, &type, &fields) && is_type_func(*type)) { // zero flag for functions
 		t.deserialize(NULL, &type, &fields);
 	}
 	if(!t.empty() && isPtr) {
@@ -104,14 +111,14 @@ tinfo_t  getType4Name(const char *name)
 
 bool is_ea(flags64_t flg)
 {
-	if(is64bit())
+	if(is64bit() && !isIlp32())
 		return is_qword(flg);
 	return is_dword(flg);
 }
 
 ea_t get_ea(ea_t ea)
 {
-	if(is64bit())
+	if(is64bit() && !isIlp32())
 		ea = (ea_t)get_qword(ea);
 	else
 		ea = (ea_t)get_dword(ea);
