@@ -675,7 +675,7 @@ ACT_DEF(add_VT)
 	tid_t struc_id;
 	ea_t vt_ea;
 	if(is_VT_assign(vu, &struc_id, &vt_ea) && create_VT(struc_id, vt_ea))
-		REFRESH_FUNC_CTEXT(vu);
+		vu->refresh_view(false);
 	return 0;
 }
 
@@ -1529,7 +1529,7 @@ static bool struct_matches(offset_locator_t &ifi, tid_t strucId)
 			return false;
 #else //compare type size too
 		tid_t membId = BADNODE;
-		if(struct_get_member(strucId, offset, &membId) != 0 || membId == BADNODE)
+		if(struct_get_member(strucId, (asize_t)offset, &membId) != 0 || membId == BADNODE)
 			return false;
 #if IDA_SDK_VERSION < 850
 		member_t* member = get_member_by_id(membId);
@@ -1624,7 +1624,7 @@ ACT_DEF(recognize_shape)
 	offset_locator_t ifi(lvars, (int)vi);
 	ifi.apply_to(&vu.cfunc->body, NULL);
 
-	structs_shape_t rs(offset);
+	structs_shape_t rs((asize_t)offset);
 	if(!ifi.offNtypes.empty()) {
 #if IDA_SDK_VERSION < 850
 		for(uval_t idx = get_first_struc_idx(); idx != BADNODE; idx = get_next_struc_idx(idx)) {
@@ -1687,7 +1687,7 @@ ACT_DEF(recognize_shape)
 				udm.name.sprnt("gap%X", off / 8);
 				udm.offset = off;
 				udm.size = utd[i].offset - off;
-				create_type_from_size(&udm.type, udm.size / 8);
+				create_type_from_size(&udm.type, (asize_t)(udm.size / 8));
 				off = utd[i].offset + utd[i].size;
 				utd.insert(utd.begin() + i, udm);
 				i++;
@@ -2132,7 +2132,7 @@ bool set_membr_type(tinfo_t& struc, int idx, udm_t& member, tinfo_t *newType)
 					if (mbsz <= 0)
 						break;
 					fo   += nsz;
-					fname = good_udm_name(struc, "field_%a", fo);
+					fname = good_udm_name(struc, fo * 8, "field_%a", fo);
 				}
 				return true;
 			}
@@ -2308,7 +2308,7 @@ ACT_DEF(convert_gap)
 				udm_t udm;
 				udm.offset = gapOff * 8;
 				udm.size = (fldOff - gapOff) * 8;
-				udm.name = good_udm_name(ts, "gap%X", gapOff);
+				udm.name = good_udm_name(ts, udm.offset, "gap%X", gapOff);
 				create_type_from_size(&udm.type, fldOff - gapOff);
 				ts.add_udm(udm);
 			}
@@ -2319,7 +2319,7 @@ ACT_DEF(convert_gap)
 				udm_t udm;
 				udm.offset = gapOff * 8;
 				udm.size = gapSz * 8;
-				udm.name = good_udm_name(ts, "gap%X", gapOff);
+				udm.name = good_udm_name(ts, udm.offset, "gap%X", gapOff);
 				create_type_from_size(&udm.type, gapSz);
 				ts.add_udm(udm);
 			}
@@ -2328,7 +2328,7 @@ ACT_DEF(convert_gap)
 	udm_t udm;
 	udm.offset = fldOff * 8;
 	udm.size = fldType.get_size() * 8;
-	udm.name = good_udm_name(ts, "field_%X", fldOff);
+	udm.name = good_udm_name(ts, udm.offset, "field_%X", fldOff);
 	udm.type = fldType;
 	tinfo_code_t c = ts.add_udm(udm, ETF_MAY_DESTROY);
 	if(c != TERR_OK)
@@ -3666,7 +3666,7 @@ static int scan_stack_string2(action_activation_ctx_t *ctx, bool bDecrypt)
 	vi = varIdx;
 	sval_t last_asgn_size = char_size;
 	for(sval_t spoff = var->location.stkoff(); vi != -1; spoff += last_asgn_size) {
-		vi =  lvars->find_stkvar(spoff, (int)char_size);
+		vi =  lvars->find_stkvar((int32)spoff, (int)char_size);
 		var_asgn_map1_t::iterator it = loc.varVal.find(vi);
 		if(it == loc.varVal.end())
 			break;
@@ -5055,7 +5055,7 @@ static ssize_t idaapi idb_callback(void *user_data, int ncode, va_list va)
 			break;
 
 		//rename VT method impl together with VT member
-		ea_t dstEA = get_memb2proc_ref(struc, udm->offset / 8);
+		ea_t dstEA = get_memb2proc_ref(struc, (uint32)(udm->offset / 8));
 		if (dstEA != BADADDR && dstEA != funcRenameEa && set_name(dstEA, newname, SN_FORCE)) { //avoid recursive renaming
 			qstring newGblName = get_name(dstEA);
 			msg("[hrt] %a renamed to %s\n", dstEA, newGblName.c_str());
@@ -5178,10 +5178,11 @@ static ssize_t idaapi idb_callback(void *user_data, int ncode, va_list va)
 									struc.get_type_name(&fullname); // get_numbered_type_name
 									fullname.append('.');
 									fullname.append(udm.name);
-									if(struc.rename_udm(idx, new_name) == TERR_OK)
-										msg("[hrt] struc member '%s' renamed to '%s'\n", fullname.c_str(), new_name);
+									qstring nn = good_udm_name(struc, udm.offset, new_name);
+									if(struc.rename_udm(idx, nn.c_str()) == TERR_OK)
+										msg("[hrt] struc member '%s' renamed to '%s'\n", fullname.c_str(), nn.c_str());
 									else
-										warning("[hrt] fail rename struc member '%s' to '%s'\nit seems bad name, press 'Ctrl-Z' and try again", fullname.c_str(), new_name);
+										warning("[hrt] fail rename struc member '%s' to '%s'\nit seems bad name, press 'Ctrl-Z' and try again", fullname.c_str(), nn.c_str());
 								}
 #endif //IDA_SDK_VERSION < 850
 							}
@@ -5335,7 +5336,7 @@ plugmod_t*
 	addon.producer = "Sergey Belov and Milan Bohacek, Rolf Rolles, Takahiro Haruyama," \
 									 " Karthik Selvaraj, Ali Rahbar, Ali Pezeshk, Elias Bachaalany, Markus Gaasedelen";
 	addon.url = "https://github.com/KasperskyLab/hrtng";
-	addon.version = "2.4.32";
+	addon.version = "2.4.34";
 	register_addon(&addon);	
 
 	msg("[hrt] %s (%s) v.%s for IDA%d is ready to use\n", addon.id, addon.name, addon.version, IDA_SDK_VERSION);

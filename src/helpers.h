@@ -62,6 +62,7 @@
   #define find_udm find_udt_member
   #define NTF_NO_NAMECHK 0
   #define tinfo_errstr(err) ""
+  #define TERR_BAD_TYPE ((tinfo_code_t)-5)
 #endif // IDA_SDK_VERSION < 840
 
 #if IDA_SDK_VERSION < 830
@@ -147,7 +148,7 @@ void create_type_from_size(tinfo_t* t, asize_t size);
 void stripName(qstring* name);
 void stripNum(qstring* name);
 int namecmp(const char* name, const char* cmpWith);
-qstring good_udm_name(const tinfo_t &struc, const char *format, ...);
+qstring good_udm_name(const tinfo_t &struc, uint64 offInBits, const char *format, ...);
 
 void patch_str(ea_t ea, const char *str, sval_t len, bool forceZeroTerm = false);
 void patch_wstr(ea_t ea, const char *str, sval_t len);
