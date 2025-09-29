@@ -1,0 +1,70 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+      - master
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  build:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            name: Linux
+            artifact: build/hrtng.so
+          - os: macos-latest
+            name: macOS
+            artifact: build/hrtng.dylib
+          - os: windows-latest
+            name: Windows
+            artifact: build/Release/hrtng.dll
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Clone IDA SDK
+        run: |
+          rm -rf ida-sdk
+          git clone --depth 1 https://github.com/HexRaysSA/ida-sdk.git ida-sdk
+
+      - name: Configure CMake
+        run: |
+          cmake -S src -B build -DCMAKE_BUILD_TYPE=Release
+
+      - name: Detect parallel jobs
+        id: jobs
+        run: |
+          if [[ "${{ runner.os }}" == "Windows" ]]; then
+            echo "count=${NUMBER_OF_PROCESSORS}" >> "$GITHUB_OUTPUT"
+          elif [[ "${{ runner.os }}" == "macOS" ]]; then
+            echo "count=$(sysctl -n hw.ncpu)" >> "$GITHUB_OUTPUT"
+          else
+            echo "count=$(nproc)" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Build
+        run: |
+          cmake --build build --config Release --clean-first --parallel ${{ steps.jobs.outputs.count }}
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: hrtng-${{ matrix.name }}
+          path: ${{ matrix.artifact }}
