@@ -359,12 +359,12 @@ static const char* importEnumFromTil(til_t *til, const char* name, litval_t val,
 											tinfo_code_t code = t.set_named_type(nullptr, typeName, NTF_TYPE | NTF_REPLACE);
 											Log(llDebug, "set_named_type('%s') returns %d\n", typeName, code);
 										}
-#elif0
+#elif 0
 										//INTERR 140 on some enums inside some tils (ex: MACRO_INVALID_HANDLE_VALUE in vc10_64)
 										tinfo_code_t code = t.set_named_type(nullptr, typeName, NTF_TYPE|NTF_REPLACE);
 										if(code != TERR_OK)
 											Log(llDebug, "set_named_type('%s') returns %d\n", typeName, code);
-#else
+#elif 0
 										//create a full copy of enum type in local til
 										//the 'copy_type' below does some strange magic, TERR_OK is returned but copied type does not appeared in local til
 										//(and isn't cached in local til, thats slows repeating searching)
@@ -372,6 +372,11 @@ static const char* importEnumFromTil(til_t *til, const char* name, litval_t val,
 										tinfo_code_t code = t.copy_type(nullptr, typeName, NTF_REPLACE);
 										if(code != TERR_OK)
 											Log(llDebug, "copy_type('%s') returns %d\n", typeName, code);
+#else
+										//Thanks Hex-Rays Team for proposed fix.
+										if(!copy_named_type(get_idati(), til, typeName))
+											Log(llDebug, "copy_named_type('%s') error\n", typeName);
+
 #endif
 #endif //IDA_SDK_VERSION < 850
 									}

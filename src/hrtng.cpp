@@ -4796,15 +4796,15 @@ void auto_comments(cfunc_t *cfunc)
 	if(cfunc->treeitems.size() > 0)	{
 		for(ssize_t i = cfunc->treeitems.size() - 1; i >= 0; i--) {
 			citem_t *cit = cfunc->treeitems[i];
-			if(cit->op == cot_call && cit->ea != BADADDR) {
+			if(cit->op == cot_call && cit->ea != BADADDR && ((cexpr_t*)(cit))->x->op != cot_obj) { // only indirect calls
 				eavec_t callees;
 				int y;
 				if(!cxrefs_from(cit->ea, &callees))
 					continue;
 				//display comment single callee if name doesnt match
 				if(callees.size() == 1) {
-					qstring name1, name2;
-					if(getExpName(cfunc, ((cexpr_t*)(cit))->x, &name1) && getEaName(callees.front(), &name2) && name1 == name2)
+					qstring xname;
+					if(getExpName(cfunc, ((cexpr_t*)(cit))->x, &xname) && xname == get_short_name(callees.front()))
 						continue;
 				}
 				if(cfunc->find_item_coords(cit, nullptr, &y) && y >= 0 && (size_t)y < cfunc->sv.size()) {
@@ -4851,15 +4851,21 @@ void auto_comments(cfunc_t *cfunc)
 	}
 	if (ufIsInFL(cfunc->entry_ea)) {
 		cfunc->sv.insert(cfunc->sv.begin(), simpleline_t(COLSTR("// Uflattening failed or incomplete, displayed pseudocode is incorrect. Press F5 to see the original code", SCOLOR_AUTOCMT)));
+		cfunc->hdrlines++;
 		ufAddGL(cfunc->entry_ea); // disable unflattener to let user to do smth with it (remove MBA, opaque predicates, etc)
 		ufDelFL(cfunc->entry_ea); // clear fail status
-	} else if (ufIsInGL(cfunc->entry_ea))
+	} else if (ufIsInGL(cfunc->entry_ea)) {
 		cfunc->sv.insert(cfunc->sv.begin(), simpleline_t(COLSTR("// The function may be unflattened", SCOLOR_AUTOCMT)));
-	else if (ufIsInWL(cfunc->entry_ea))
+		cfunc->hdrlines++;
+	} else if (ufIsInWL(cfunc->entry_ea)) {
 		cfunc->sv.insert(cfunc->sv.begin(), simpleline_t(COLSTR("// The function has been successfully unflattened", SCOLOR_AUTOCMT)));
+		cfunc->hdrlines++;
+	}
 
-	if (has_varvals(cfunc->entry_ea))
+	if (has_varvals(cfunc->entry_ea)) {
 		cfunc->sv.insert(cfunc->sv.begin(), simpleline_t(COLSTR("// The function is modified by hidden variable assignment(s)", SCOLOR_AUTOCMT)));
+		cfunc->hdrlines++;
+	}
 }
 
 //--------------------------------------------------------------------------
@@ -4986,9 +4992,10 @@ static ssize_t idaapi callback(void *, hexrays_event_t event, va_list va)
 			const char* msigName = msig_cached(cfunc->entry_ea);
 			if(msigName) {
 				qstring cmt(msigMessage); cmt.append(msigName);
-				cfunc->sv.insert(cfunc->sv.begin(), simpleline_t(cmt));
 				if(msigRenamed)
-					cfunc->sv.front().line.append(". Press F5 to refresh pseudocode.");
+					cmt.append(". Press F5 to refresh pseudocode.");
+				cfunc->sv.insert(cfunc->sv.begin(), simpleline_t(cmt));
+				cfunc->hdrlines++;
 			}
 			break;
 		}
@@ -5919,7 +5926,7 @@ plugmod_t*
 	addon.producer = "Sergey Belov and Hex-Rays SA, Milan Bohacek, J.C. Roberts, Alexander Pick, Rolf Rolles, Takahiro Haruyama," \
 									 " Karthik Selvaraj, Ali Rahbar, Ali Pezeshk, Elias Bachaalany, Markus Gaasedelen";
 	addon.url = "https://github.com/KasperskyLab/hrtng";
-	addon.version = "3.9.113";
+	addon.version = "3.9.114";
 	msg("[hrt] %s (%s) v%s for IDA%d\n", addon.id, addon.name, addon.version, IDA_SDK_VERSION);
 
 	if(inited) {
