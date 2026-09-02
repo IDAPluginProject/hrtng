@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 ### Added
+### Changed
+### Removed
+### Fixed
+
+## 3.9.114 - 2026-09-02
+### Added
 - Autorename: ban names like `var_1A0`
 - Enums: NTSTATUS, HANDLE, find enums in return statement
 ### Changed
@@ -11,7 +17,6 @@
 - Recognize shape: ask to "Reset pointer type"
 - Force set type on var rename
 - Auto comments: display comment for a single callee of indirect call if name doesnt match
-### Removed
 ### Fixed
 - Autorename: fix `_vtbl` ban
 - Autorename: avoid renaming vtbl to base class member
